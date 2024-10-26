@@ -11,8 +11,13 @@ class Settings(BaseSettings):
     COLLECTION_NAME: str = "document_collection"
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    MODEL_NAME: str = "gpt-3.5-turbo"
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    MODEL_NAME: str = "gpt-4-turbo"  # Latest GPT-4 Turbo model
+    EMBEDDING_MODEL: str = "text-embedding-3-large"  # Latest and most powerful embedding model
+    
+    # Additional model parameters
+    TEMPERATURE: float = 0.7
+    MAX_TOKENS: int = 1500
+    TOP_P: float = 0.9
     
     class Config:
         env_file = ".env"
@@ -20,7 +25,8 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings():
     settings = Settings()
-    logger.info("Settings loaded. OPENAI_API_KEY present: %s", bool(settings.OPENAI_API_KEY))
+    logger.info(f"Using Language Model: {settings.MODEL_NAME}")
+    logger.info(f"Using Embedding Model: {settings.EMBEDDING_MODEL}")
     return settings
 
 settings = get_settings()
