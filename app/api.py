@@ -5,7 +5,7 @@ from typing import Optional
 import logging
 from app.utils.document_processor import DocumentProcessor
 from app.utils.vector_store import VectorStore
-from app.utils.chat_model import ChatModel, PromptStrategy, ResponseFormat
+from app.utils.chat_model import ChatModel, PromptStrategy, ResponseFormat, ContextMode
 from app.config import settings
 
 # Configure logging
@@ -33,6 +33,7 @@ class QuestionRequest(BaseModel):
     max_context: Optional[int] = 3
     strategy: Optional[PromptStrategy] = PromptStrategy.STANDARD
     response_format: Optional[ResponseFormat] = ResponseFormat.DEFAULT
+    context_mode: Optional[ContextMode] = ContextMode.STRICT
 
 @app.get("/health")
 async def health_check():
@@ -82,7 +83,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/ask")
 async def ask_question(request: QuestionRequest):
-    """Ask a question about the uploaded documents."""
+    """Ask a question about the uploaded documents with optional context flexibility."""
     try:
         # Retrieve relevant context from vector store
         context = vector_store.query(
@@ -95,7 +96,8 @@ async def ask_question(request: QuestionRequest):
             question=request.question,
             context=context,
             strategy=request.strategy,
-            response_format=request.response_format
+            response_format=request.response_format,
+            context_mode=request.context_mode
         )
         
         return result
