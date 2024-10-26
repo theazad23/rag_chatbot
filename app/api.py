@@ -5,7 +5,7 @@ from typing import Optional
 import logging
 from app.utils.document_processor import DocumentProcessor
 from app.utils.vector_store import VectorStore
-from app.utils.chat_model import ChatModel
+from app.utils.chat_model import ChatModel, PromptStrategy, ResponseFormat
 from app.config import settings
 
 # Configure logging
@@ -31,6 +31,8 @@ chat_model = ChatModel()
 class QuestionRequest(BaseModel):
     question: str
     max_context: Optional[int] = 3
+    strategy: Optional[PromptStrategy] = PromptStrategy.STANDARD
+    response_format: Optional[ResponseFormat] = ResponseFormat.DEFAULT
 
 @app.get("/health")
 async def health_check():
@@ -89,12 +91,14 @@ async def ask_question(request: QuestionRequest):
         )
         
         # Generate response using the chat model
-        response = chat_model.generate_response(request.question, context)
+        result = await chat_model.generate_response(
+            question=request.question,
+            context=context,
+            strategy=request.strategy,
+            response_format=request.response_format
+        )
         
-        return {
-            "response": response,
-            "context_used": len(context)
-        }
+        return result
         
     except Exception as e:
         logger.error(f"Error processing question: {e}")
