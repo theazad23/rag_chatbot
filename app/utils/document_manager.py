@@ -1,4 +1,3 @@
-# app/utils/document_manager.py
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import hashlib
@@ -12,114 +11,88 @@ class DocumentManager:
     def __init__(self, storage_dir: str = "document_storage"):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(exist_ok=True)
-        self.documents: Dict[str, Dict] = {}
-        self.load_existing_documents()
-        logger.info(f"Initialized DocumentManager with storage directory: {storage_dir}")
-
-    def load_existing_documents(self):
-        """Load existing document records from storage."""
+        self.documents: Dict[str, Dict] = self._load_documents()
+        
+    def _load_documents(self) -> Dict:
+        """Load existing documents from storage."""
         index_file = self.storage_dir / "document_index.json"
         if index_file.exists():
-            with open(index_file, 'r') as f:
-                self.documents = json.load(f)
-                logger.info(f"Loaded {len(self.documents)} existing documents")
+            with open(index_file, "r") as f:
+                return json.load(f)
+        return {}
 
-    def save_document_index(self):
-        """Save the current document index to storage."""
+    def _save_documents(self) -> None:
+        """Save document index to storage."""
         index_file = self.storage_dir / "document_index.json"
-        with open(index_file, 'w') as f:
+        with open(index_file, "w") as f:
             json.dump(self.documents, f, indent=2)
-        logger.debug("Saved document index")
 
-    def add_document(self, 
-                    content: str, 
-                    filename: str, 
-                    metadata: Optional[Dict] = None) -> Tuple[str, Dict]:
+    def add_document(self, content: str, metadata: Dict) -> str:
         """Add a new document with metadata."""
         doc_id = self._generate_doc_id(content)
         
-        if metadata is None:
-            metadata = {}
-            
-        document_info = {
-            "filename": filename,
-            "content_hash": doc_id,
-            "metadata": {
-                **metadata,
-                "filename": filename,
-                "added_at": datetime.now().isoformat(),
-                "file_size": len(content),
-                "content_type": self._get_content_type(filename)
-            },
+        # Save document content
+        doc_file = self.storage_dir / f"{doc_id}.txt"
+        with open(doc_file, "w") as f:
+            f.write(content)
+        
+        # Update document index
+        self.documents[doc_id] = {
+            "metadata": metadata,
+            "added_at": datetime.now().isoformat(),
+            "file_path": str(doc_file),
             "chunks": [],
             "embeddings_updated": None
         }
         
-        # Save content to file
-        content_file = self.storage_dir / f"{doc_id}.txt"
-        with open(content_file, 'w') as f:
-            f.write(content)
-            
-        self.documents[doc_id] = document_info
-        self.save_document_index()
-        
-        logger.info(f"Added document: {filename} with ID: {doc_id}")
-        return doc_id, document_info
+        self._save_documents()
+        logger.info(f"Added document {doc_id} with metadata: {metadata}")
+        return doc_id
 
-    def update_chunks(self, 
-                     doc_id: str, 
-                     chunks: List[str], 
-                     chunk_metadata: Optional[List[Dict]] = None) -> bool:
+    def update_chunks(self, doc_id: str, chunks: List[str], chunk_metadata: List[Dict]) -> None:
         """Update document chunks after processing."""
-        if doc_id not in self.documents:
-            logger.warning(f"Document {doc_id} not found")
-            return False
-            
-        if chunk_metadata is None:
-            chunk_metadata = [{"index": i} for i in range(len(chunks))]
-            
-        self.documents[doc_id]["chunks"] = [
-            {
-                "content": chunk,
-                "metadata": metadata
-            }
-            for chunk, metadata in zip(chunks, chunk_metadata)
-        ]
-        
-        self.documents[doc_id]["embeddings_updated"] = datetime.now().isoformat()
-        self.save_document_index()
-        
-        logger.info(f"Updated chunks for document {doc_id}: {len(chunks)} chunks")
-        return True
+        if doc_id in self.documents:
+            self.documents[doc_id]["chunks"] = list(zip(chunks, chunk_metadata))
+            self.documents[doc_id]["embeddings_updated"] = datetime.now().isoformat()
+            self._save_documents()
+            logger.info(f"Updated chunks for document {doc_id}")
 
     def get_document_content(self, doc_id: str) -> Optional[str]:
         """Get the content of a document."""
         if doc_id not in self.documents:
+            logger.warning(f"Document {doc_id} not found")
             return None
             
-        content_file = self.storage_dir / f"{doc_id}.txt"
-        if not content_file.exists():
-            logger.error(f"Content file missing for document {doc_id}")
-            return None
-            
-        with open(content_file, 'r') as f:
-            return f.read()
+        file_path = Path(self.documents[doc_id]["file_path"])
+        if file_path.exists():
+            with open(file_path, "r") as f:
+                return f.read()
+        return None
 
-    def get_document_info(self, doc_id: str) -> Optional[Dict]:
+    def get_document_info(self, doc_id: str) -> Dict:
         """Get information about a document."""
-        return self.documents.get(doc_id)
+        if doc_id not in self.documents:
+            logger.warning(f"Document {doc_id} not found")
+            return {}
+            
+        doc = self.documents[doc_id]
+        return {
+            "document_id": doc_id,
+            "metadata": doc["metadata"],
+            "added_at": doc["added_at"],
+            "num_chunks": len(doc["chunks"]),
+            "embeddings_updated": doc["embeddings_updated"]
+        }
 
     def list_documents(self) -> List[Dict]:
         """List all documents with their metadata."""
         return [
             {
-                "doc_id": doc_id,
-                "filename": info["filename"],
-                "added_at": info["metadata"]["added_at"],
-                "num_chunks": len(info["chunks"]),
-                "embeddings_updated": info["embeddings_updated"]
+                "document_id": doc_id,
+                "metadata": doc["metadata"],
+                "added_at": doc["added_at"]
             }
-            for doc_id, info in self.documents.items()
+            for doc_id, doc in self.documents.items()
         ]
 
     def delete_document(self, doc_id: str) -> bool:
@@ -128,27 +101,29 @@ class DocumentManager:
             return False
             
         # Delete content file
-        content_file = self.storage_dir / f"{doc_id}.txt"
-        if content_file.exists():
-            content_file.unlink()
+        file_path = Path(self.documents[doc_id]["file_path"])
+        if file_path.exists():
+            file_path.unlink()
             
         # Remove from index
         del self.documents[doc_id]
-        self.save_document_index()
+        self._save_documents()
         
         logger.info(f"Deleted document {doc_id}")
         return True
 
+    def search_documents(self, query: Dict[str, any]) -> List[Dict]:
+        """Search documents by metadata."""
+        results = []
+        for doc_id, doc in self.documents.items():
+            match = all(
+                key in doc["metadata"] and doc["metadata"][key] == value
+                for key, value in query.items()
+            )
+            if match:
+                results.append(self.get_document_info(doc_id))
+        return results
+
     def _generate_doc_id(self, content: str) -> str:
         """Generate a unique document ID."""
         return hashlib.md5(content.encode()).hexdigest()
-
-    def _get_content_type(self, filename: str) -> str:
-        """Determine content type from filename."""
-        extension = Path(filename).suffix.lower()
-        content_types = {
-            '.txt': 'text/plain',
-            '.md': 'text/markdown',
-            '.json': 'application/json'
-        }
-        return content_types.get(extension, 'text/plain')

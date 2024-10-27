@@ -69,3 +69,6 @@ htmlcov/
 
 # Sample data (uncomment if you want to exclude sample data)
 # sample_data/
+
+# document_storage
+document_storage/
