@@ -48,7 +48,6 @@ async def create_conversation():
 @app.get("/conversation/{conversation_id}")
 async def get_conversation(conversation_id: str):
     """Get conversation summary and history."""
-    logger.info(conversation_id)
     return memory_manager.get_conversation_summary(conversation_id)
 
 @app.delete("/conversation/{conversation_id}")
