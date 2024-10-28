@@ -1,4 +1,3 @@
-# app/utils/chat_model.py
 from typing import List, Dict, Optional, Any
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate
@@ -66,13 +65,25 @@ class ChatModel:
         """Get the appropriate system prompt based on context mode."""
         if context_mode == ContextMode.STRICT:
             return """You are a helpful AI assistant that answers questions based strictly on the provided context. 
-            If the answer cannot be fully derived from the context, say 'I don't have enough information in the 
-            provided context to answer that question.' Do not use any knowledge outside of the given context."""
+            The context will include two sections:
+            1. 'Conversation History': Contains previous interactions that provide context for the current question
+            2. 'Relevant Documents': Contains information to use in formulating your response
+            
+            Treat both sections as valid sources of information. When a question refers to something mentioned 
+            in either the conversation history or relevant documents, use that information to provide an answer.
+            
+            If you cannot find a complete answer using either section, say 'I don't have enough information in 
+            the provided context to answer that question.'
+            
+            Do not use any knowledge outside of these two context sections."""
         else:
-            return """You are a helpful AI assistant that primarily answers questions based on the provided context, 
-            but can also draw upon broader knowledge when needed. When using information beyond the provided context, 
-            clearly indicate this by prefacing that part of your response with '[Outside Context]:'. Always prioritize 
-            information from the provided context when available."""
+            return """You are a helpful AI assistant that primarily answers questions based on the provided context. 
+            The context includes both 'Conversation History' and 'Relevant Documents' sections - use both to 
+            formulate your responses. When the answer can be found in either section, use that information first.
+            
+            When using information beyond the provided context, clearly indicate this by prefacing that part of 
+            your response with '[Outside Context]:'. Always prioritize information from the provided context sections
+            when available."""
 
     def _initialize_prompt_templates(self):
         """Initialize different prompt strategies with context mode support."""
@@ -117,6 +128,16 @@ Please break this down step by step:"""
             }
             for context_mode in ContextMode
         }
+
+    def _format_context(self, context: List[str]) -> str:
+        """Format context sections clearly for the model."""
+        formatted_sections = []
+        for section in context:
+            if section.startswith('\nConversation History:'):
+                formatted_sections.insert(0, section)  # Put conversation history first
+            else:
+                formatted_sections.append(section)
+        return "\n\n".join(formatted_sections)
 
     def _format_response(self, response: str, format_type: ResponseFormat) -> str:
         """Format the response according to the specified format."""
@@ -187,15 +208,18 @@ Please break this down step by step:"""
             Dict containing response and metadata
         """
         try:
+            # Format context to clearly separate conversation history and documents
+            formatted_context = self._format_context(context)
+            
+            # Log the formatted context for debugging
+            logger.info(f"Formatted context:\n{formatted_context}")
+            
             # Get the appropriate prompt template based on strategy and context mode
             prompt_template = self.prompt_templates[context_mode][strategy]
             
-            # Combine context chunks into a single string
-            context_text = "\n\n".join(context)
-            
-            # Generate prompt
+            # Generate prompt with formatted context
             prompt = prompt_template.format(
-                context=context_text,
+                context=formatted_context,
                 question=question
             )
             
@@ -218,7 +242,8 @@ Please break this down step by step:"""
                     "uses_outside_context": uses_outside_context,
                     "timestamp": datetime.now().isoformat(),
                     "model": settings.MODEL_NAME,
-                    "context_chunks_used": len(context)
+                    "context_chunks_used": len(context),
+                    "has_conversation_history": any("Conversation History:" in c for c in context)
                 }
             }
             
@@ -231,7 +256,7 @@ Please break this down step by step:"""
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             raise
-
+        
     def update_prompt_strategy(self, strategy: PromptStrategy, system_message: str, human_template: str):
         """
         Add or update a prompt strategy.

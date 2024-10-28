@@ -131,18 +131,31 @@ async def ask_question(request: QuestionRequest):
         # Get conversation context if conversation_id is provided
         conversation_context = []
         if request.conversation_id:
-            conversation_context = memory_manager.get_conversation_context(request.conversation_id)
+            history = memory_manager.get_conversation_context(request.conversation_id)
+            # Format previous interactions for context
+            conversation_context = [
+                f"Previous interaction {i+1}:\n"
+                f"Question: {interaction['question']}\n"
+                f"Answer: {interaction['response']['response']}"
+                for i, interaction in enumerate(history)
+            ]
         
         # Retrieve relevant context from vector store
-        context = vector_store.query(
+        document_context = vector_store.query(
             request.question,
             n_results=request.max_context
         )
         
+        # Combine both types of context
+        combined_context = [
+            "\nConversation History:\n" + "\n\n".join(conversation_context),
+            "\nRelevant Documents:\n" + "\n\n".join(document_context)
+        ] if conversation_context else document_context
+        
         # Generate response using the chat model
         result = await chat_model.generate_response(
             question=request.question,
-            context=context,
+            context=combined_context,
             strategy=request.strategy,
             response_format=request.response_format,
             context_mode=request.context_mode,
@@ -155,7 +168,7 @@ async def ask_question(request: QuestionRequest):
                 request.conversation_id,
                 request.question,
                 result,
-                context
+                document_context  # Store only document context
             )
         
         return result
