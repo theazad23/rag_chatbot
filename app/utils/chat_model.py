@@ -212,7 +212,7 @@ Please break this down step by step:"""
             formatted_context = self._format_context(context)
             
             # Log the formatted context for debugging
-            logger.info(f"Formatted context:\n{formatted_context}")
+            #logger.info(f"Formatted context:\n{formatted_context}")
             
             # Get the appropriate prompt template based on strategy and context mode
             prompt_template = self.prompt_templates[context_mode][strategy]
