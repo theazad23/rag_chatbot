@@ -72,4 +72,8 @@ htmlcov/
 
 # document_storage
 document_storage/
+
+# conversation_storage
+conversation_storage/
+
 rag_chatbot_codebase.md
