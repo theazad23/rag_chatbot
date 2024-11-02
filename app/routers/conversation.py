@@ -1,8 +1,15 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime
-from app.models.conversation import ConversationMessage, ConversationDetail
-from app.services import memory_manager 
+from app.models.conversation import (
+    ConversationMessage, 
+    ConversationDetail,
+    MessageEditRequest,
+    MessageRetryRequest
+)
+from app.models.chat import QuestionRequest
+from app.services import memory_manager
+from app.routers import chat as chat_router
 
 router = APIRouter(prefix="/conversation", tags=["conversations"])
 
@@ -142,5 +149,86 @@ async def list_conversations(
                 "order": order
             }
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/{conversation_id}/messages/{message_id}/edit")
+async def edit_message(
+    conversation_id: str,
+    message_id: str,
+    request: MessageEditRequest
+):
+    """Edit a message in the conversation."""
+    try:
+        result = memory_manager.edit_message(
+            conversation_id,
+            message_id,
+            request.new_content,
+            request.preserve_history
+        )
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        if message_id.endswith("_user"):
+            chat_request = QuestionRequest(
+                question=request.new_content,
+                conversation_id=conversation_id
+            )
+            return await chat_router.ask_question(chat_request)
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{conversation_id}/messages/{message_id}/retry")
+async def retry_message(
+    conversation_id: str,
+    message_id: str,
+    request: MessageRetryRequest
+):
+    """Retry a message with optional modifications."""
+    try:
+        result = memory_manager.retry_message(
+            conversation_id,
+            message_id,
+            request.modified_content,
+            request.preserve_history
+        )
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        chat_request = QuestionRequest(
+            question=request.modified_content or result["questions_asked"][-1],
+            conversation_id=conversation_id
+        )
+        return await chat_router.ask_question(chat_request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{conversation_id}/messages/{message_id}/retry-response")
+async def retry_response(
+    conversation_id: str,
+    message_id: str,
+    request: MessageRetryRequest
+):
+    """Retry generating a response for a specific message."""
+    try:
+        result = memory_manager.retry_response(
+            conversation_id,
+            message_id,
+            request.preserve_history
+        )
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+
+        original_question = result["questions_asked"][-1]
+        chat_request = QuestionRequest(
+            question=original_question,
+            conversation_id=conversation_id
+        )
+        return await chat_router.ask_question(chat_request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

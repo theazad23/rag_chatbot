@@ -153,3 +153,94 @@ class ConversationMemory:
         except Exception as e:
             logger.error(f"Error during conversation cleanup: {e}")
             return 0
+
+    def edit_message(self, conversation_id: str, message_id: str, new_content: str, preserve_history: bool = True) -> Dict:
+        """Edit a message in the conversation history."""
+        if conversation_id not in self.conversations:
+            logger.warning(f"Conversation {conversation_id} not found")
+            return {"error": "Conversation not found"}
+
+        try:
+            msg_index = int(message_id.split('_')[1])
+        except (IndexError, ValueError):
+            return {"error": "Invalid message ID"}
+
+        conversation = self.conversations[conversation_id]
+        if msg_index >= len(conversation):
+            return {"error": "Message not found"}
+
+        if preserve_history:
+            new_conversation = conversation[:msg_index]
+            new_conversation[msg_index]["question"] = new_content
+            self.conversations[conversation_id] = new_conversation
+        else:
+            conversation[msg_index]["question"] = new_content
+            self.conversations[conversation_id] = conversation[:msg_index + 1]
+
+        self._save_conversation(conversation_id)
+        return self.get_conversation_summary(conversation_id)
+
+    def retry_message(self, conversation_id: str, message_id: str, modified_content: Optional[str] = None, preserve_history: bool = True) -> Dict:
+        """Retry a message with optional modifications."""
+        if conversation_id not in self.conversations:
+            logger.warning(f"Conversation {conversation_id} not found")
+            return {"error": "Conversation not found"}
+
+        try:
+            msg_index = int(message_id.split('_')[1])
+        except (IndexError, ValueError):
+            return {"error": "Invalid message ID"}
+
+        conversation = self.conversations[conversation_id]
+        if msg_index >= len(conversation):
+            return {"error": "Message not found"}
+
+        original_message = conversation[msg_index]
+        retry_content = modified_content if modified_content else original_message["question"]
+
+        if preserve_history:
+            new_conversation = conversation[:msg_index]
+            new_interaction = {
+                "timestamp": datetime.now().isoformat(),
+                "question": retry_content,
+                "previous_version": original_message.get("message_id"),
+                "is_retry": True
+            }
+            new_conversation.append(new_interaction)
+            self.conversations[conversation_id] = new_conversation
+        else:
+            conversation[msg_index]["question"] = retry_content
+            conversation[msg_index]["timestamp"] = datetime.now().isoformat()
+            conversation[msg_index]["is_retry"] = True
+            self.conversations[conversation_id] = conversation[:msg_index + 1]
+
+        self._save_conversation(conversation_id)
+        return self.get_conversation_summary(conversation_id)
+
+    def retry_response(self, conversation_id: str, message_id: str, preserve_history: bool = True) -> Dict:
+        """Retry generating a response for a specific message."""
+        if conversation_id not in self.conversations:
+            logger.warning(f"Conversation {conversation_id} not found")
+            return {"error": "Conversation not found"}
+
+        try:
+            msg_index = int(message_id.split('_')[1])
+        except (IndexError, ValueError):
+            return {"error": "Invalid message ID"}
+
+        conversation = self.conversations[conversation_id]
+        if msg_index >= len(conversation):
+            return {"error": "Message not found"}
+
+        original_message = conversation[msg_index]
+
+        if preserve_history:
+            new_conversation = conversation[:msg_index + 1]
+            new_conversation[msg_index]["retry_count"] = original_message.get("retry_count", 0) + 1
+            self.conversations[conversation_id] = new_conversation
+        else:
+            conversation[msg_index]["retry_count"] = original_message.get("retry_count", 0) + 1
+            self.conversations[conversation_id] = conversation[:msg_index + 1]
+
+        self._save_conversation(conversation_id)
+        return self.get_conversation_summary(conversation_id)

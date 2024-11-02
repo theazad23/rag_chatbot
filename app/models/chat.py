@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
-from app.utils.chat_model import PromptStrategy, ResponseFormat, ContextMode
+from app.services.chat_model import PromptStrategy, ResponseFormat, ContextMode  # Updated import path
 
 class QuestionRequest(BaseModel):
     question: str

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 class MessageResponse(BaseModel):
     """Schema for chat message responses"""
@@ -25,3 +25,13 @@ class ConversationDetail(BaseModel):
     total_messages: int
     messages: List[ConversationMessage]
     metadata: Optional[dict] = None
+
+class MessageEditRequest(BaseModel):
+    """Schema for editing a message in a conversation"""
+    new_content: str
+    preserve_history: bool = True
+
+class MessageRetryRequest(BaseModel):
+    """Schema for retrying a message or response"""
+    preserve_history: bool = True
+    modified_content: Optional[str] = None
