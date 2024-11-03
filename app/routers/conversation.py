@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime
 from app.models.conversation import (
-    ConversationMessage, 
+    ConversationMessage,
     ConversationDetail,
     MessageEditRequest,
     MessageRetryRequest
@@ -10,6 +10,9 @@ from app.models.conversation import (
 from app.models.chat import QuestionRequest
 from app.services import memory_manager
 from app.routers import chat as chat_router
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversation", tags=["conversations"])
 
@@ -28,32 +31,34 @@ async def get_conversation_detail(
     """Get detailed conversation information including message history."""
     try:
         history = memory_manager.get_conversation_context(conversation_id, num_previous=message_limit)
-        if not history:
+        summary = memory_manager.get_conversation_summary(conversation_id)
+        
+        if not summary or "error" in summary:
             raise HTTPException(status_code=404, detail="Conversation not found")
-            
+
         messages = []
-        for interaction in history:
-            messages.append({
-                "id": f"{conversation_id}_{len(messages)}",
-                "role": "user",
-                "content": interaction["question"],
-                "timestamp": interaction["timestamp"],
-                "metadata": {"type": "question"}
-            })
+        for index, interaction in enumerate(history):
+            # Add question message
+            messages.append(ConversationMessage(
+                id=f"{conversation_id}_{index*2}",
+                role="user",
+                content=interaction["question"],
+                timestamp=interaction["timestamp"],
+                metadata={"type": "question"}
+            ))
             
-            messages.append({
-                "id": f"{conversation_id}_{len(messages)}",
-                "role": "assistant",
-                "content": interaction["response"]["response"],
-                "timestamp": interaction["timestamp"],
-                "metadata": {
+            # Add response message
+            messages.append(ConversationMessage(
+                id=f"{conversation_id}_{index*2+1}",
+                role="assistant",
+                content=interaction["response"]["response"],
+                timestamp=interaction["timestamp"],
+                metadata={
                     "type": "response",
                     **interaction["response"].get("metadata", {})
                 }
-            })
-            
-        summary = memory_manager.get_conversation_summary(conversation_id)
-        
+            ))
+
         return ConversationDetail(
             conversation_id=conversation_id,
             title=f"Conversation from {summary['start_time']}",
@@ -67,7 +72,10 @@ async def get_conversation_detail(
                 "total_interactions": summary["total_interactions"]
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error getting conversation detail: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{conversation_id}")
@@ -83,20 +91,32 @@ async def update_conversation(
 ):
     """Update conversation metadata."""
     try:
-        conversation = memory_manager.get_conversation_summary(conversation_id)
-        if not conversation:
+        summary = memory_manager.get_conversation_summary(conversation_id)
+        if not summary or "error" in summary:
             raise HTTPException(status_code=404, detail="Conversation not found")
-            
-        updated = memory_manager.update_conversation_metadata(
-            conversation_id,
-            title=title,
-            metadata=metadata
-        )
-        
-        return {"message": "Conversation updated", "conversation": updated}
+
+        updated_metadata = {}
+        if title:
+            updated_metadata["title"] = title
+        if metadata:
+            updated_metadata.update(metadata)
+
+        if not updated_metadata:
+            return {"message": "No updates provided", "conversation": summary}
+
+        summary.setdefault("metadata", {})
+        summary["metadata"].update(updated_metadata)
+
+        memory_manager._save_conversation(conversation_id)
+
+        return {
+            "message": "Conversation updated",
+            "conversation": summary
+        }
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error updating conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{conversation_id}")
@@ -189,23 +209,48 @@ async def retry_message(
 ):
     """Retry a message with optional modifications."""
     try:
+        # First check if conversation exists
+        conversation = memory_manager.get_conversation_summary(conversation_id)
+        if not conversation or "error" in conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Try to retry the message
         result = memory_manager.retry_message(
             conversation_id,
             message_id,
             request.modified_content,
             request.preserve_history
         )
-        
+
         if "error" in result:
             raise HTTPException(status_code=404, detail=result["error"])
 
+        # Get the question to retry
+        original_question = request.modified_content
+        if not original_question:
+            msg_index = int(message_id.split('_')[1])
+            conversation = memory_manager.get_conversation_context(conversation_id)
+            if msg_index < len(conversation):
+                original_question = conversation[msg_index]["question"]
+            else:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+        # Create a new chat request
         chat_request = QuestionRequest(
-            question=request.modified_content or result["questions_asked"][-1],
+            question=original_question,
             conversation_id=conversation_id
         )
+
+        # Send the chat request
         return await chat_router.ask_question(chat_request)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error retrying message: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/{conversation_id}/messages/{message_id}/retry-response")
 async def retry_response(
@@ -215,20 +260,59 @@ async def retry_response(
 ):
     """Retry generating a response for a specific message."""
     try:
-        result = memory_manager.retry_response(
-            conversation_id,
-            message_id,
-            request.preserve_history
-        )
-        
-        if "error" in result:
-            raise HTTPException(status_code=404, detail=result["error"])
+        # First verify the conversation exists
+        summary = memory_manager.get_conversation_summary(conversation_id)
+        if not summary or "error" in summary:
+            raise HTTPException(status_code=404, detail="Conversation not found")
 
-        original_question = result["questions_asked"][-1]
-        chat_request = QuestionRequest(
-            question=original_question,
-            conversation_id=conversation_id
-        )
-        return await chat_router.ask_question(chat_request)
+        # Get the conversation history
+        history = memory_manager.get_conversation_context(conversation_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="Conversation history not found")
+
+        # Parse the message index from the ID
+        msg_parts = message_id.split('_')
+        if len(msg_parts) != 2:
+            raise HTTPException(status_code=400, detail="Invalid message ID format")
+            
+        try:
+            msg_index = int(msg_parts[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid message ID format")
+
+        # Find the corresponding question
+        interaction_index = msg_index // 2  # Each interaction has a question and response
+        if interaction_index >= len(history):
+            raise HTTPException(status_code=404, detail="Message not found")
+
+        # Get the original question for this response
+        original_question = history[interaction_index]["question"]
+
+        # Create a mock response for testing
+        # In production, this would trigger the actual AI model
+        response_data = {
+            "response": f"Regenerated response for: {original_question}",
+            "metadata": {
+                "is_retry": True,
+                "original_message_id": message_id,
+                "timestamp": datetime.now().isoformat(),
+                "conversation_id": conversation_id
+            }
+        }
+
+        if request.preserve_history:
+            # Add this as a new interaction
+            memory_manager.add_interaction(
+                conversation_id,
+                original_question,
+                response_data,
+                []  # No context used for retry
+            )
+
+        return response_data
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error retrying response: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from app.services import memory_manager
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 
