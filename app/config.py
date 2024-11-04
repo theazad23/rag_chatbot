@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     COLLECTION_NAME: str = "document_collection"
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    MODEL_NAME: str = "gpt-4-turbo"  # Latest GPT-4 Turbo model
+    MODEL_NAME: str = "chatgpt-4o-latest"
     EMBEDDING_MODEL: str = "text-embedding-3-large"  # Latest and most powerful embedding model
     
     # Additional model parameters
